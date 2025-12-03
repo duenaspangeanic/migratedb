@@ -237,6 +237,49 @@ def generate_report(target_conn, databases, rules, fk_report, output_json="migra
         writer.writerows(report_data)
 
     print(f"\n📄 Reporte generado: {output_json}, {output_csv}")
+
+def validate_rules(conn, rules):
+    """
+    Valida que cada regla apunte a una base, tabla y columna existente.
+    Si encuentra reglas inválidas, las devuelve junto con las válidas.
+    """
+    cur = conn.cursor(dictionary=True)
+    valid_rules = []
+    invalid_rules = []
+
+    for rule in rules:
+        db = rule["db"]
+        table = rule["table"]
+        column = rule["column"]
+
+        try:
+            # Cambiar a la base indicada
+            cur.execute(f"USE `{db}`")
+
+            # Verificar si la tabla existe
+            cur.execute("SHOW TABLES")
+            tables = [row[f"Tables_in_{db}"] for row in cur.fetchall()]
+            if table not in tables:
+                invalid_rules.append({**rule, "error": f"Tabla {table} no existe en {db}"})
+                continue
+
+            # Verificar si la columna existe
+            cur.execute(f"SHOW COLUMNS FROM `{table}`")
+            cols = [row["Field"] for row in cur.fetchall()]
+            if column not in cols:
+                invalid_rules.append({**rule, "error": f"Columna {column} no existe en {db}.{table}"})
+                continue
+
+            # Si pasa todas las validaciones
+            valid_rules.append(rule)
+
+        except mysql.connector.Error as e:
+            invalid_rules.append({**rule, "error": str(e)})
+
+    cur.close()
+    return valid_rules, invalid_rules
+
+
 if __name__ == "__main__":
     source_conn = connect_db("SOURCE")
     target_conn = connect_db("TARGET")
@@ -244,9 +287,22 @@ if __name__ == "__main__":
     databases = get_env_list("DATABASES")
     rules = parse_rules()
 
-    total_rows_global = [0]      # contador total de filas
-    processed_rows_global = [0]  # contador procesadas
-    fk_report = []               # lista para registrar FKs añadidas o fallidas
+    # Validar reglas
+    valid_rules, invalid_rules = validate_rules(source_conn, rules)
+    if invalid_rules:
+        print("\n❌ Se encontraron reglas inválidas, abortando migración:")
+        for r in invalid_rules:
+            print(f" - {r['db']}.{r['table']}.{r['column']}: {r['error']}")
+        source_conn.close()
+        target_conn.close()
+        exit(1)  # detener ejecución inmediatamente
+
+    # Usar solo las válidas
+    rules = valid_rules
+
+    total_rows_global = [0]
+    processed_rows_global = [0]
+    fk_report = []
 
     for db in databases:
         recreate_database(target_conn, db)
