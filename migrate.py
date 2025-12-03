@@ -35,7 +35,7 @@ def connect_db(prefix):
         user=os.getenv(f"{prefix}_USER"),
         password=os.getenv(f"{prefix}_PASSWORD"),
         connection_timeout=600,   # tiempo máximo de espera en segundos
-        connection_attempts=2,    # reintentos
+        #connection_attempts=2,    # reintentos
         database=""  # se cambia dinámicamente
     )
 
@@ -48,39 +48,60 @@ def recreate_database(target_conn, dbname):
     tgt_cur.close()
     print(f"📐 Base {dbname} recreada en destino")
 
-def migrate_db(source_conn, target_conn, dbname, rules, total_rows_global, processed_rows_global):
+def migrate_db(source_conn, target_conn, dbname, rules, total_rows_global, processed_rows_global, fk_report):
     print(f"\n🚀 Migrando base: {dbname}")
     src_cur = source_conn.cursor(dictionary=True)
     tgt_cur = target_conn.cursor()
 
-    src_cur.execute(f"USE {dbname}")
-    tgt_cur.execute(f"USE {dbname}")
+    src_cur.execute(f"USE `{dbname}`")
+    tgt_cur.execute(f"USE `{dbname}`")
 
     src_cur.execute("SHOW TABLES")
     tables = [row[f"Tables_in_{dbname}"] for row in src_cur.fetchall()]
 
+    fk_constraints = []  # almacenamos las foreign keys para segunda fase
+
+    # --- Fase 1: crear tablas sin FKs ---
     for table in tables:
         print(f"\n🗑️ Eliminando tabla {table} en destino si existe...")
-        tgt_cur.execute(f"DROP TABLE IF EXISTS {table}")
+        tgt_cur.execute(f"DROP TABLE IF EXISTS `{table}`")
 
-        # Crear tabla destino con misma estructura
-        src_cur.execute(f"SHOW CREATE TABLE {table}")
+        src_cur.execute(f"SHOW CREATE TABLE `{table}`")
         create_stmt = src_cur.fetchone()["Create Table"]
-        tgt_cur.execute(create_stmt)
-        print(f"📐 Tabla {table} recreada en destino")
 
-        # Contar filas
-        src_cur.execute(f"SELECT COUNT(*) as total FROM {table}")
+        # Extraer foreign keys y eliminarlas temporalmente
+        lines = create_stmt.split("\n")
+        new_lines = []
+        for line in lines:
+            if "FOREIGN KEY" in line:
+                fk_constraints.append((table, line.strip().rstrip(",")))
+            else:
+                new_lines.append(line)
+
+        # Quitar comas colgantes justo antes del cierre
+        for i in range(len(new_lines) - 1):
+            if new_lines[i].strip().endswith(",") and new_lines[i+1].strip().startswith(")"):
+                new_lines[i] = new_lines[i].rstrip(",")
+
+        create_stmt_no_fk = "\n".join(new_lines)
+
+        # Debug opcional para verificar la sentencia final
+        print(f"DEBUG CREATE TABLE {table}:\n{create_stmt_no_fk}")
+
+        tgt_cur.execute(create_stmt_no_fk)
+        print(f"📐 Tabla {table} recreada en destino (sin FKs)")
+
+        # Migración de datos
+        src_cur.execute(f"SELECT COUNT(*) as total FROM `{table}`")
         total_rows = src_cur.fetchone()["total"]
         total_rows_global[0] += total_rows
         print(f"📊 Tabla {table}: {total_rows} filas a migrar")
 
-        # Seleccionar todas las filas
-        src_cur.execute(f"SELECT * FROM {table}")
+        src_cur.execute(f"SELECT * FROM `{table}`")
         rows = src_cur.fetchall()
 
         for idx, row in enumerate(rows, start=1):
-            # Aplicar reglas si existen
+            # Aplicar reglas
             for rule in [r for r in rules if r["db"] == dbname and r["table"] == table]:
                 col = rule["column"]
                 if rule["original"] == "":
@@ -91,22 +112,20 @@ def migrate_db(source_conn, target_conn, dbname, rules, total_rows_global, proce
                         row[col] = str(row[col]).replace(rule["original"], rule["replacement"])
                         rule["replacements_done"] += 1
 
-            # Insertar fila con IDs originales
-            cols = ", ".join(row.keys())
+            # Insertar fila
+            cols = ", ".join([f"`{c}`" for c in row.keys()])
             vals = ", ".join(["%s"] * len(row))
             tgt_cur.execute(
-                f"INSERT INTO {table} ({cols}) VALUES ({vals})",
+                f"INSERT INTO `{table}` ({cols}) VALUES ({vals})",
                 list(row.values())
             )
 
             processed_rows_global[0] += 1
 
-            # Log progreso tabla
             if idx % max(1, total_rows // 10) == 0 or idx == total_rows:
                 percent = (idx / total_rows) * 100
                 print(f"   → Tabla {table}: {idx}/{total_rows} ({percent:.1f}%)")
 
-            # Log progreso global
             if processed_rows_global[0] % max(1, total_rows_global[0] // 20) == 0 or processed_rows_global[0] == total_rows_global[0]:
                 percent_global = (processed_rows_global[0] / total_rows_global[0]) * 100
                 print(f"🌍 Progreso global: {processed_rows_global[0]}/{total_rows_global[0]} ({percent_global:.1f}%)")
@@ -114,13 +133,28 @@ def migrate_db(source_conn, target_conn, dbname, rules, total_rows_global, proce
         target_conn.commit()
         print(f"✅ Migración de tabla {table} completada")
 
+    # --- Fase 2: añadir FKs ---
+    print(f"\n🔗 Añadiendo foreign keys en {dbname}...")
+    for table, fk in fk_constraints:
+        try:
+            alter_stmt = f"ALTER TABLE `{table}` ADD {fk}"
+            tgt_cur.execute(alter_stmt)
+            fk_report.append({"database": dbname, "table": table, "fk": fk, "status": "added"})
+            print(f"   → FK añadida en {table}: {fk}")
+        except mysql.connector.Error as e:
+            fk_report.append({"database": dbname, "table": table, "fk": fk, "status": f"failed: {e}"})
+            print(f"⚠️ No se pudo añadir FK en {table}: {e}")
+
+    target_conn.commit()
+    print(f"✅ Foreign keys añadidas en {dbname}")
+
     src_cur.close()
     tgt_cur.close()
 
 def adjust_indexes(target_conn, dbname):
     print(f"\n🔧 Ajustando índices en base: {dbname}")
     tgt_cur = target_conn.cursor(dictionary=True)
-    tgt_cur.execute(f"USE {dbname}")
+    tgt_cur.execute(f"USE `{dbname}`")
     tgt_cur.execute("SHOW TABLES")
     tables = [row[f"Tables_in_{dbname}"] for row in tgt_cur.fetchall()]
 
@@ -136,7 +170,10 @@ def adjust_indexes(target_conn, dbname):
             current_index = result["AUTO_INCREMENT"]
             if current_index < 50000:
                 print(f"   → Tabla {table}: índice {current_index} → ajustando a 50000")
-                tgt_cur.execute(f"ALTER TABLE {table} AUTO_INCREMENT = 50000")
+                try:
+                    tgt_cur.execute(f"ALTER TABLE `{table}` AUTO_INCREMENT = 50000")
+                except mysql.connector.Error as e:
+                    print(f"⚠️ No se pudo ajustar índice en {table}: {e}")
             else:
                 print(f"   → Tabla {table}: índice ya >= 50000 ({current_index}), no se cambia")
 
@@ -144,13 +181,15 @@ def adjust_indexes(target_conn, dbname):
     tgt_cur.close()
     print(f"✅ Índices ajustados en {dbname}")
 
-def generate_report(target_conn, databases, rules, output_json="migration_report.json", output_csv="migration_report.csv"):
+
+
+def generate_report(target_conn, databases, rules, fk_report, output_json="migration_report.json", output_csv="migration_report.csv"):
     report_data = []
 
     tgt_cur = target_conn.cursor(dictionary=True)
 
     for dbname in databases:
-        tgt_cur.execute(f"USE {dbname}")
+        tgt_cur.execute(f"USE `{dbname}`")
         tgt_cur.execute("SHOW TABLES")
         tables = [row[f"Tables_in_{dbname}"] for row in tgt_cur.fetchall()]
 
@@ -171,7 +210,6 @@ def generate_report(target_conn, databases, rules, output_json="migration_report
 
     tgt_cur.close()
 
-    # Añadir reglas y conteo de reemplazos
     rules_report = [
         {
             "database": r["db"],
@@ -186,21 +224,19 @@ def generate_report(target_conn, databases, rules, output_json="migration_report
 
     final_report = {
         "tables": report_data,
-        "rules": rules_report
+        "rules": rules_report,
+        "foreign_keys": fk_report
     }
 
-    # Guardar JSON
     with open(output_json, "w", encoding="utf-8") as fjson:
         json.dump(final_report, fjson, indent=4, ensure_ascii=False)
 
-    # Guardar CSV (solo tablas)
     with open(output_csv, "w", newline="", encoding="utf-8") as fcsv:
         writer = csv.DictWriter(fcsv, fieldnames=["database", "table", "auto_increment"])
         writer.writeheader()
         writer.writerows(report_data)
 
     print(f"\n📄 Reporte generado: {output_json}, {output_csv}")
-
 if __name__ == "__main__":
     source_conn = connect_db("SOURCE")
     target_conn = connect_db("TARGET")
@@ -210,13 +246,14 @@ if __name__ == "__main__":
 
     total_rows_global = [0]      # contador total de filas
     processed_rows_global = [0]  # contador procesadas
+    fk_report = []               # lista para registrar FKs añadidas o fallidas
 
     for db in databases:
         recreate_database(target_conn, db)
-        migrate_db(source_conn, target_conn, db, rules, total_rows_global, processed_rows_global)
+        migrate_db(source_conn, target_conn, db, rules, total_rows_global, processed_rows_global, fk_report)
         adjust_indexes(target_conn, db)
 
-    generate_report(target_conn, databases, rules)
+    generate_report(target_conn, databases, rules, fk_report)
 
     source_conn.close()
     target_conn.close()
