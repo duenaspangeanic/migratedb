@@ -26,10 +26,12 @@ También puede usarse en migraciones cruzadas (MariaDB ↔ MySQL), con precauci�
 
 ```
 
-migrate.py              # Script principal
-.env                    # Variables de entorno (conexiones y reglas)
-migration_report_YYYYMMDD_HHMMSS.json  # Reporte detallado en JSON
-migration_report_YYYYMMDD_HHMMSS.csv   # Reporte resumido en CSV
+| Archivo                                | Descripción                                 |
+|----------------------------------------|---------------------------------------------|
+| `migrate.py`                           | Script principal                            |
+| `.env`                                 | Variables de entorno (conexiones y reglas)  |
+| `migration_report_YYYYMMDD_HHMMSS.json`| Reporte detallado en JSON                   |
+| `migration_report_YYYYMMDD_HHMMSS.csv` | Reporte resumido en CSV                     |
 
 ```
 
