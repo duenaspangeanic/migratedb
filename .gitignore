@@ -1,0 +1,45 @@
+# Entorno virtual
+venv/
+ENV/
+env/
+.venv/
+
+# Archivos de configuración sensibles
+.env
+*.env
+
+# Archivos de dependencias
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+*.egg
+
+# Archivos de logs
+*.log
+logs/
+log/
+
+# Archivos de salida y reportes
+*.json
+*.csv
+migration_report.json
+migration_report.csv
+
+# Archivos de compilación
+build/
+dist/
+*.so
+*.dll
+
+# Archivos de IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Archivos temporales del sistema
+.DS_Store
+Thumbs.db
