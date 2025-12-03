@@ -24,6 +24,14 @@ def parse_rules():
                 print(f"⚠️ Regla mal formada: {value}")
     return rules
 
+def get_auto_increment_min():
+    val = os.getenv("AUTO_INCREMENT_MIN")
+    try:
+        return int(val) if val else 800000
+    except ValueError:
+        return 800000
+
+
 def get_env_list(var_name):
     val = os.getenv(var_name, "")
     return [x.strip() for x in val.split(",") if x.strip()]
@@ -158,6 +166,8 @@ def adjust_indexes(target_conn, dbname):
     tgt_cur.execute("SHOW TABLES")
     tables = [row[f"Tables_in_{dbname}"] for row in tgt_cur.fetchall()]
 
+    min_index = get_auto_increment_min()
+
     for table in tables:
         tgt_cur.execute("""
             SELECT AUTO_INCREMENT
@@ -168,24 +178,27 @@ def adjust_indexes(target_conn, dbname):
 
         if result and result["AUTO_INCREMENT"]:
             current_index = result["AUTO_INCREMENT"]
-            if current_index < 50000:
-                print(f"   → Tabla {table}: índice {current_index} → ajustando a 50000")
+            if current_index < min_index:
+                print(f"   → Tabla {table}: índice {current_index} → ajustando a {min_index}")
                 try:
-                    tgt_cur.execute(f"ALTER TABLE `{table}` AUTO_INCREMENT = 50000")
+                    tgt_cur.execute(f"ALTER TABLE `{table}` AUTO_INCREMENT = {min_index}")
                 except mysql.connector.Error as e:
                     print(f"⚠️ No se pudo ajustar índice en {table}: {e}")
             else:
-                print(f"   → Tabla {table}: índice ya >= 50000 ({current_index}), no se cambia")
+                print(f"   → Tabla {table}: índice ya >= {min_index} ({current_index}), no se cambia")
 
     target_conn.commit()
     tgt_cur.close()
     print(f"✅ Índices ajustados en {dbname}")
 
 
+from datetime import datetime
+import os
+import json
+import csv
 
-def generate_report(target_conn, databases, rules, fk_report, output_json="migration_report.json", output_csv="migration_report.csv"):
+def generate_report(target_conn, databases, rules, fk_report):
     report_data = []
-
     tgt_cur = target_conn.cursor(dictionary=True)
 
     for dbname in databases:
@@ -228,15 +241,31 @@ def generate_report(target_conn, databases, rules, fk_report, output_json="migra
         "foreign_keys": fk_report
     }
 
-    with open(output_json, "w", encoding="utf-8") as fjson:
+    # 📂 Determinar path desde .env
+    output_path = os.getenv("REPORTS_PATH", "").strip()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if output_path:
+        os.makedirs(output_path, exist_ok=True)
+        json_file = os.path.join(output_path, f"migration_report_{timestamp}.json")
+        csv_file = os.path.join(output_path, f"migration_report_{timestamp}.csv")
+    else:
+        json_file = f"migration_report_{timestamp}.json"
+        csv_file = f"migration_report_{timestamp}.csv"
+
+    # Guardar JSON
+    with open(json_file, "w", encoding="utf-8") as fjson:
         json.dump(final_report, fjson, indent=4, ensure_ascii=False)
 
-    with open(output_csv, "w", newline="", encoding="utf-8") as fcsv:
+    # Guardar CSV
+    with open(csv_file, "w", newline="", encoding="utf-8") as fcsv:
         writer = csv.DictWriter(fcsv, fieldnames=["database", "table", "auto_increment"])
         writer.writeheader()
         writer.writerows(report_data)
 
-    print(f"\n📄 Reporte generado: {output_json}, {output_csv}")
+    print(f"\n📄 Reporte generado: {json_file}, {csv_file}")
+
+
 
 def validate_rules(conn, rules):
     """
@@ -295,10 +324,21 @@ if __name__ == "__main__":
             print(f" - {r['db']}.{r['table']}.{r['column']}: {r['error']}")
         source_conn.close()
         target_conn.close()
-        exit(1)  # detener ejecución inmediatamente
+        exit(1)
 
-    # Usar solo las válidas
     rules = valid_rules
+
+    # 📂 Verificar carpeta de reportes desde .env (Windows o Linux)
+    reports_path = os.getenv("REPORTS_PATH", "").strip()
+    if reports_path:
+        try:
+            os.makedirs(reports_path, exist_ok=True)
+            print(f"📂 Carpeta de reportes verificada/creada: {reports_path}")
+        except Exception as e:
+            print(f"❌ Error creando/verificando carpeta de reportes {reports_path}: {e}")
+            source_conn.close()
+            target_conn.close()
+            exit(1)
 
     total_rows_global = [0]
     processed_rows_global = [0]

@@ -1,6 +1,7 @@
 # 🛠️ Proyecto de Migración MySQL/MariaDB
 
-Este proyecto automatiza la migración de bases de datos entre servidores MySQL/MariaDB, aplicando reglas de transformación de datos, recreando índices y generando reportes finales.
+Este proyecto automatiza la migración de bases de datos entre servidores **MariaDB → MariaDB** y **MySQL → MySQL**, aplicando reglas de transformación de datos, recreando índices y generando reportes finales.  
+También puede usarse en migraciones cruzadas (MariaDB ↔ MySQL), con precaución en tipos de datos y collations.
 
 ---
 
@@ -9,24 +10,27 @@ Este proyecto automatiza la migración de bases de datos entre servidores MySQL/
 - **Recreación de bases y tablas** en el destino, eliminando previamente si existen.
 - **Migración de datos** con aplicación de reglas definidas en `.env`.
 - **Validación de reglas antes de migrar**: si alguna apunta a una tabla o columna inexistente, el proceso se detiene mostrando el error.
-- **Manejo de foreign keys** en dos fases:
+- **Manejo de foreign keys en dos fases**:
   - Fase 1: creación de tablas sin FKs.
   - Fase 2: adición de FKs con `ALTER TABLE`.
-- **Ajuste automático de índices AUTO_INCREMENT** (mínimo 50,000).
+- **Ajuste automático de índices AUTO_INCREMENT** según valor configurado en `.env` (por defecto 800000).
 - **Generación de reportes JSON y CSV** con:
   - Tablas migradas y sus índices.
   - Reglas aplicadas y número de reemplazos.
   - Foreign keys añadidas o fallidas.
+- **Compatibilidad multiplataforma**: funciona en Windows y Linux.
 
 ---
 
 ## 📂 Estructura del proyecto
 
 ```
-migrate.py        # Script principal
-.env              # Variables de entorno (conexiones y reglas)
-migration_report.json  # Reporte detallado en JSON
-migration_report.csv   # Reporte resumido en CSV
+
+migrate.py              # Script principal
+.env                    # Variables de entorno (conexiones y reglas)
+migration_report_YYYYMMDD_HHMMSS.json  # Reporte detallado en JSON
+migration_report_YYYYMMDD_HHMMSS.csv   # Reporte resumido en CSV
+
 ```
 
 ---
@@ -54,6 +58,11 @@ DATABASES=dev_pgweb,dev_eco
 # Reglas de migración
 MIGRATION_RULE_1=dev_pgweb|files|notiflink||notification_link
 MIGRATION_RULE_2=dev_eco|users|email|old.com|new.com
+
+# Configuración adicional
+AUTO_INCREMENT_MIN=800000
+REPORTS_PATH=C:/Users/ale/Desktop/reports   # Ejemplo Windows
+# REPORTS_PATH=/home/alejandro/reports      # Ejemplo Linux
 ```
 
 Formato de reglas:
@@ -67,6 +76,22 @@ MIGRATION_RULE_X = db | tabla | columna | original | replacement
 - `columna`: nombre de la columna.
 - `original`: valor a reemplazar (vacío = reemplazo directo).
 - `replacement`: nuevo valor.
+
+---
+
+## 📂 Carpeta de reportes
+
+- Si `REPORTS_PATH` está definido:
+  - El script verifica la carpeta y la crea automáticamente si no existe.
+  - Los reportes se guardan en esa ruta.
+- Si **no** está definido:
+  - Los reportes se guardan en el mismo directorio del script.
+- Los nombres de archivo incluyen la **fecha/hora** para evitar sobrescribir:
+
+  ```
+  migration_report_20251203_095800.json
+  migration_report_20251203_095800.csv
+  ```
 
 ---
 
@@ -96,8 +121,8 @@ python migrate.py
 
 ## 📊 Reportes
 
-- **migration_report.json**: detalle completo de tablas, reglas y foreign keys.
-- **migration_report.csv**: resumen de tablas y valores AUTO_INCREMENT.
+- **migration_report_YYYYMMDD_HHMMSS.json**: detalle completo de tablas, reglas y foreign keys.
+- **migration_report_YYYYMMDD_HHMMSS.csv**: resumen de tablas y valores AUTO_INCREMENT.
 
 ---
 
@@ -117,4 +142,5 @@ El proceso se detiene inmediatamente (`exit(1)`).
 
 ## 🎉 Resultado
 
-Un flujo de migración **robusto, reproducible y seguro**, con validación previa de reglas y reportes finales para trazabilidad.
+Un flujo de migración **robusto, reproducible y seguro**, con validación previa de reglas, configuración flexible desde `.env` y reportes finales para trazabilidad.
+
