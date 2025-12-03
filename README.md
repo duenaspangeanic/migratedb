@@ -1,161 +1,120 @@
-# 🛠️ Proyecto de Migración de Bases de Datos MySQL
+# 🛠️ Proyecto de Migración MySQL/MariaDB
 
-Este proyecto permite migrar bases de datos completas desde un servidor **origen** hacia un servidor **destino**, asegurando que:
+Este proyecto automatiza la migración de bases de datos entre servidores MySQL/MariaDB, aplicando reglas de transformación de datos, recreando índices y generando reportes finales.
 
-- La estructura de las tablas se mantiene idéntica al origen.
-- Los datos se copian preservando los IDs originales.
-- Se aplican reglas de reemplazo dinámicas en columnas específicas.
-- Los índices (`AUTO_INCREMENT`) se ajustan automáticamente a **≥ 50 000** después de la migración.
-- Se genera un **reporte JSON y CSV** con trazabilidad de índices y reemplazos aplicados.
+---
+
+## 🚀 Características principales
+
+- **Recreación de bases y tablas** en el destino, eliminando previamente si existen.
+- **Migración de datos** con aplicación de reglas definidas en `.env`.
+- **Validación de reglas antes de migrar**: si alguna apunta a una tabla o columna inexistente, el proceso se detiene mostrando el error.
+- **Manejo de foreign keys** en dos fases:
+  - Fase 1: creación de tablas sin FKs.
+  - Fase 2: adición de FKs con `ALTER TABLE`.
+- **Ajuste automático de índices AUTO_INCREMENT** (mínimo 50,000).
+- **Generación de reportes JSON y CSV** con:
+  - Tablas migradas y sus índices.
+  - Reglas aplicadas y número de reemplazos.
+  - Foreign keys añadidas o fallidas.
 
 ---
 
 ## 📂 Estructura del proyecto
 
 ```
-
-.
-├── migrate.py             # Script principal de migración
-├── .env                   # Configuración de conexiones y reglas
-├── requirements.txt       # Dependencias del proyecto
-├── .gitignore             # Archivos ignorados en Git
-└── README.md              # Documentación del proyecto
-
+migrate.py        # Script principal
+.env              # Variables de entorno (conexiones y reglas)
+migration_report.json  # Reporte detallado en JSON
+migration_report.csv   # Reporte resumido en CSV
 ```
 
 ---
 
 ## ⚙️ Configuración
 
-Crea un archivo `.env` en la raíz del proyecto con el siguiente contenido:
+En el archivo `.env` define:
 
 ```env
 # Conexión origen
-SOURCE_HOST=192.168.1.10
+SOURCE_HOST=localhost
 SOURCE_PORT=3306
 SOURCE_USER=root
-SOURCE_PASSWORD=clave_origen
+SOURCE_PASSWORD=1234
 
 # Conexión destino
-TARGET_HOST=192.168.1.20
+TARGET_HOST=localhost
 TARGET_PORT=3306
 TARGET_USER=root
-TARGET_PASSWORD=clave_destino
+TARGET_PASSWORD=1234
 
-# Lista de bases a migrar (separadas por coma)
-DATABASES=bd1,bd2
+# Bases a migrar
+DATABASES=dev_pgweb,dev_eco
 
 # Reglas de migración
-# Formato: DB|TABLE|COLUMN|ORIGINAL|REPLACEMENT
-# Si ORIGINAL está vacío, se reemplaza todo el contenido de la columna por REPLACEMENT
-MIGRATION_RULE_1=Relay|files|notifilink|https://eco.pangeanic.com|http://localhost
-MIGRATION_RULE_2=Relay|files|description||TextoNuevo
-MIGRATION_RULE_3=Relay|logs|message|error,critical|warning,important
+MIGRATION_RULE_1=dev_pgweb|files|notiflink||notification_link
+MIGRATION_RULE_2=dev_eco|users|email|old.com|new.com
 ```
 
-👉 Notas sobre las reglas:
+Formato de reglas:
 
-- `ORIGINAL` vacío → reemplazo total del contenido por `REPLACEMENT`.
-- `ORIGINAL` con valor → reemplazo parcial de coincidencias.
-
----
-
-## 🐍 Instalación
-
-### 1. Crear entorno virtual
-
-```bash
-python3 -m venv venv
+```
+MIGRATION_RULE_X = db | tabla | columna | original | replacement
 ```
 
-### 2. Activar entorno
-
-- **Linux/macOS**:
-
-  ```bash
-  source venv/bin/activate
-  ```
-
-- **Windows (PowerShell)**:
-
-  ```powershell
-  venv\Scripts\Activate.ps1
-  ```
-
-### 3. Instalar dependencias
-
-```bash
-pip install -r requirements.txt
-```
+- `db`: nombre de la base.
+- `tabla`: nombre de la tabla.
+- `columna`: nombre de la columna.
+- `original`: valor a reemplazar (vacío = reemplazo directo).
+- `replacement`: nuevo valor.
 
 ---
 
 ## ▶️ Ejecución
 
-Ejecuta el script principal:
+1. Instala dependencias:
+
+```bash
+pip install mysql-connector-python python-dotenv
+```
+
+2. Ejecuta el script:
 
 ```bash
 python migrate.py
 ```
 
-El proceso realizará:
-
-1. **DROP DATABASE IF EXISTS** en el destino.  
-2. **CREATE DATABASE** con el mismo nombre.  
-3. **DROP TABLE IF EXISTS** y recreación de cada tabla con `SHOW CREATE TABLE`.  
-4. Migración de datos con aplicación de reglas de reemplazo.  
-5. Ajuste de índices (`AUTO_INCREMENT`) a **50 000** si quedaron por debajo.  
-6. Generación de **reportes JSON y CSV** con trazabilidad de índices y reemplazos.
-
----
-
-## 📊 Logs
-
-Durante la ejecución verás:
-
-- Progreso de migración por tabla (con porcentaje).  
-- Progreso global de todas las filas migradas.  
-- Mensajes de recreación de bases y tablas.  
-- Ajustes de índices con valores antes y después.  
-- Conteo de reemplazos aplicados por cada regla.  
-
-Ejemplo:
-
-```
-🚀 Migrando base: bd1
-🗑️ Eliminando tabla files en destino si existe...
-📐 Tabla files recreada en destino
-📊 Tabla files: 12000 filas a migrar
-   → Tabla files: 1200/12000 (10.0%)
-🌍 Progreso global: 1200/35000 (3.4%)
-...
-✅ Migración de tabla files completada
-🔧 Ajustando índices en base: bd1
-   → Tabla files: índice 340 → ajustando a 50000
-✅ Índices ajustados en bd1
-
-📄 Reporte generado: migration_report.json, migration_report.csv
-🎉 Migración finalizada con reporte
-```
+3. El proceso:
+   - Valida reglas.
+   - Recrea bases y tablas.
+   - Migra datos aplicando reglas.
+   - Ajusta índices.
+   - Añade foreign keys.
+   - Genera reportes.
 
 ---
 
-## 📄 Reportes generados
+## 📊 Reportes
 
-- **migration_report.json** → detalle de cada tabla y reglas aplicadas.  
-- **migration_report.csv** → índices finales por tabla.  
+- **migration_report.json**: detalle completo de tablas, reglas y foreign keys.
+- **migration_report.csv**: resumen de tablas y valores AUTO_INCREMENT.
 
-Ejemplo JSON:
+---
 
-```json
-{
-    "tables": [
-        {"database": "bd1", "table": "files", "auto_increment": 50000},
-        {"database": "bd1", "table": "logs", "auto_increment": 50234}
-    ],
-    "rules": [
-        {"database": "Relay", "table": "files", "column": "notifilink", "original": "https://eco.pangeanic.com", "replacement": "http://localhost", "replacements_done": 12000},
-        {"database": "Relay", "table": "files", "column": "description", "original": "", "replacement": "TextoNuevo", "replacements_done": 12000}
-    ]
-}
+## ✅ Validación de reglas
 
+Antes de migrar, el script valida que cada regla apunte a una base, tabla y columna existente.  
+Si alguna es inválida:
+
+```
+❌ Se encontraron reglas inválidas, abortando migración:
+ - dev_pgweb.files.notifilink: Columna notifilink no existe en dev_pgweb.files
+```
+
+El proceso se detiene inmediatamente (`exit(1)`).
+
+---
+
+## 🎉 Resultado
+
+Un flujo de migración **robusto, reproducible y seguro**, con validación previa de reglas y reportes finales para trazabilidad.
