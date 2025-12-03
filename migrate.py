@@ -94,7 +94,7 @@ def migrate_db(source_conn, target_conn, dbname, rules, total_rows_global, proce
         create_stmt_no_fk = "\n".join(new_lines)
 
         # Debug opcional para verificar la sentencia final
-        print(f"DEBUG CREATE TABLE {table}:\n{create_stmt_no_fk}")
+        #print(f"DEBUG CREATE TABLE {table}:\n{create_stmt_no_fk}")
 
         tgt_cur.execute(create_stmt_no_fk)
         print(f"📐 Tabla {table} recreada en destino (sin FKs)")
