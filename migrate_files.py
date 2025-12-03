@@ -79,11 +79,7 @@ def connect_ssh(cfg):
         print(f"❌ Error en conexión SSH {cfg['host']}: {e}")
         return None
 
-def copy_recursive(sftp, remote_dir, local_dir, cutoff, copied_files_global, total_files_global):
-    """
-    Copia archivos y subdirectorios recursivamente desde remote_dir a local_dir
-    preservando fechas y filtrando por cutoff (últimos N días).
-    """
+def copy_and_count_recursive(sftp, remote_dir, local_dir, cutoff, copied_files_global):
     os.makedirs(local_dir, exist_ok=True)
     copied_local = 0
 
@@ -92,58 +88,62 @@ def copy_recursive(sftp, remote_dir, local_dir, cutoff, copied_files_global, tot
         local_path = os.path.join(local_dir, entry.filename)
 
         if stat.S_ISDIR(entry.st_mode):
-            print(f"📂 Creando carpeta: {local_path}")
-            copied_sub, copied_files_global = copy_recursive(sftp, remote_path, local_path, cutoff, copied_files_global, total_files_global)
+            copied_sub, copied_files_global = copy_and_count_recursive(
+                sftp, remote_path, local_path, cutoff, copied_files_global
+            )
             copied_local += copied_sub
         else:
             if entry.st_mtime >= cutoff:
                 sftp.get(remote_path, local_path)
-                attrs = sftp.stat(remote_path)
-                os.utime(local_path, (attrs.st_atime, attrs.st_mtime))
+                os.utime(local_path, (entry.st_atime, entry.st_mtime))  # sin stat extra
                 copied_local += 1
                 copied_files_global += 1
-                percent_global = (copied_files_global / total_files_global) * 100 if total_files_global else 100
-                print(f"   → {remote_path} copiado a {local_path} [fechas preservadas]")
-                print(f"🌍 Progreso global: {copied_files_global}/{total_files_global} ({percent_global:.1f}%)")
+                print(f"   → {remote_path} copiado a {local_path}")
+                print(f"🌍 Archivos copiados hasta ahora: {copied_files_global}")
 
     return copied_local, copied_files_global
-
-def count_files_recursive(sftp, remote_dir, cutoff):
-    """Cuenta archivos recientes en un directorio recursivamente."""
-    total = 0
-    for entry in sftp.listdir_attr(remote_dir):
-        remote_path = f"{remote_dir}/{entry.filename}"
-        if stat.S_ISDIR(entry.st_mode):
-            total += count_files_recursive(sftp, remote_path, cutoff)
-        else:
-            if entry.st_mtime >= cutoff:
-                total += 1
-    return total
 
 def migrate_recent_files(sftp, rules):
     days = get_days_from_env()
     cutoff = time.time() - (days * 86400)
-
-    # Calcular total global
-    total_files_global = 0
-    for rule in rules:
-        try:
-            total_files_global += count_files_recursive(sftp, rule["remote"], cutoff)
-        except Exception:
-            pass
 
     copied_files_global = 0
 
     for rule in rules:
         remote_dir = rule["remote"]
         local_dir = rule["local"]
-        print(f"\n📂 Migrando recursivamente {remote_dir} → {local_dir} (últimos {days} días)")
+        print(f"\n📂 Migrando {remote_dir} → {local_dir} (últimos {days} días)")
         try:
-            copied_local, copied_files_global = copy_recursive(sftp, remote_dir, local_dir, cutoff, copied_files_global, total_files_global)
+            copied_local, copied_files_global = copy_and_count_recursive(
+                sftp, remote_dir, local_dir, cutoff, copied_files_global
+            )
             if copied_local == 0:
                 print("   ⚠️ No hay archivos recientes en este directorio.")
         except Exception as e:
             print(f"❌ Error en {remote_dir}: {e}")
+
+    print(f"\n✅ Migración finalizada. Total copiados: {copied_files_global}")
+
+def validate_rules(sftp, rules):
+    valid_rules, invalid_rules = [], []
+    for rule in rules:
+        remote_dir = rule["remote"]
+        local_dir = rule["local"]
+        try:
+            attrs = sftp.stat(remote_dir)
+            if not stat.S_ISDIR(attrs.st_mode):
+                raise IOError("No es un directorio")
+            sftp.listdir(remote_dir)
+        except IOError:
+            invalid_rules.append({**rule, "error": f"Directorio remoto no existe o no accesible: {remote_dir}"})
+            continue
+        try:
+            os.makedirs(local_dir, exist_ok=True)
+        except Exception as e:
+            invalid_rules.append({**rule, "error": f"No se pudo crear directorio local {local_dir}: {e}"})
+            continue
+        valid_rules.append(rule)
+    return valid_rules, invalid_rules
 
 def main():
     ssh_configs = parse_ssh_configs()
@@ -167,24 +167,6 @@ def main():
         sftp.close()
         ssh.close()
         print(f"\n✅ Migración finalizada para {name}")
-
-def validate_rules(sftp, rules):
-    valid_rules, invalid_rules = [], []
-    for rule in rules:
-        remote_dir = rule["remote"]
-        local_dir = rule["local"]
-        try:
-            sftp.listdir(remote_dir)
-        except IOError:
-            invalid_rules.append({**rule, "error": f"Directorio remoto no existe: {remote_dir}"})
-            continue
-        try:
-            os.makedirs(local_dir, exist_ok=True)
-        except Exception as e:
-            invalid_rules.append({**rule, "error": f"No se pudo crear directorio local {local_dir}: {e}"})
-            continue
-        valid_rules.append(rule)
-    return valid_rules, invalid_rules
 
 if __name__ == "__main__":
     main()
