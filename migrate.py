@@ -34,6 +34,8 @@ def connect_db(prefix):
         port=int(os.getenv(f"{prefix}_PORT")),
         user=os.getenv(f"{prefix}_USER"),
         password=os.getenv(f"{prefix}_PASSWORD"),
+        connection_timeout=600,   # tiempo máximo de espera en segundos
+        connection_attempts=2,    # reintentos
         database=""  # se cambia dinámicamente
     )
 
