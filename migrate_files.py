@@ -1,26 +1,12 @@
 import os
 import sys
 import time
-import paramiko
 import stat
+import paramiko
 from dotenv import load_dotenv
 from paramiko import SSHClient, AutoAddPolicy, RSAKey, Ed25519Key
 
 load_dotenv()
-
-def get_file_rules():
-    rules = []
-    for key, value in os.environ.items():
-        if key.startswith("FILE_MIGRATION_RULE_"):
-            parts = value.strip().split("|")
-            if len(parts) == 2:
-                rules.append({
-                    "remote": parts[0],
-                    "local": parts[1]
-                })
-            else:
-                print(f"⚠️ Regla mal formada: {value}")
-    return rules
 
 def get_days_from_env():
     try:
@@ -28,140 +14,151 @@ def get_days_from_env():
     except ValueError:
         return 15
 
-def connect_ssh():
-    host = os.getenv("SSH_HOST")
-    port = int(os.getenv("SSH_PORT", "22"))
-    user = os.getenv("SSH_USER")
+def parse_ssh_configs():
+    """
+    Agrupa todas las conexiones SSH y sus reglas de migración.
+    Retorna un dict con estructura:
+    {
+        "SSH1": { "host":..., "port":..., "user":..., "password":..., "key_path":..., "passphrase":..., "rules":[...] },
+        "SSH2": { ... }
+    }
+    """
+    configs = {}
+    for key, value in os.environ.items():
+        if key.startswith("SSH") and "_HOST" in key:
+            idx = key.split("_")[0]
+            configs.setdefault(idx, {})["host"] = value
+        elif key.startswith("SSH") and "_PORT" in key:
+            idx = key.split("_")[0]
+            configs.setdefault(idx, {})["port"] = int(value)
+        elif key.startswith("SSH") and "_USER" in key:
+            idx = key.split("_")[0]
+            configs.setdefault(idx, {})["user"] = value
+        elif key.startswith("SSH") and "_PASSWORD" in key:
+            idx = key.split("_")[0]
+            configs.setdefault(idx, {})["password"] = value.strip()
+        elif key.startswith("SSH") and "_KEY_PATH" in key:
+            idx = key.split("_")[0]
+            configs.setdefault(idx, {})["key_path"] = os.path.normpath(value.strip())
+        elif key.startswith("SSH") and "_KEY_PASSPHRASE" in key:
+            idx = key.split("_")[0]
+            configs.setdefault(idx, {})["passphrase"] = value
+        elif key.startswith("SSH") and "_FILE_MIGRATION_RULE_" in key:
+            idx = key.split("_")[0]
+            remote, local = value.split("|")
+            configs.setdefault(idx, {}).setdefault("rules", []).append({
+                "remote": remote.strip(),
+                "local": os.path.normpath(local.strip())
+            })
+    return configs
 
-    password = os.getenv("SSH_PASSWORD", "").strip()
-    key_path = os.getenv("SSH_KEY_PATH", "").strip()
-    passphrase = os.getenv("SSH_KEY_PASSPHRASE", None)
-
+def connect_ssh(cfg):
     ssh = SSHClient()
     ssh.set_missing_host_key_policy(AutoAddPolicy())
-
     try:
-        if password:
-            ssh.connect(hostname=host, port=port, username=user, password=password)
-            print("🔐 Conectado por contraseña")
-        elif key_path:
-            key_path = os.path.normpath(key_path)
-            if not os.path.isfile(key_path):
-                print(f"❌ Archivo de clave no encontrado: {key_path}")
-                sys.exit(1)
-
-            if "ed25519" in key_path.lower():
-                pkey = Ed25519Key.from_private_key_file(key_path, password=passphrase)
+        if cfg.get("password"):
+            ssh.connect(
+                hostname=cfg["host"],
+                port=cfg.get("port", 22),
+                username=cfg["user"],
+                password=cfg["password"]
+            )
+            print(f"🔐 {cfg['host']} conectado por contraseña")
+        elif cfg.get("key_path"):
+            if not os.path.isfile(cfg["key_path"]):
+                print(f"❌ Archivo de clave no encontrado: {cfg['key_path']}")
+                return None
+            if "ed25519" in cfg["key_path"].lower():
+                pkey = Ed25519Key.from_private_key_file(cfg["key_path"], password=cfg.get("passphrase"))
             else:
-                pkey = RSAKey.from_private_key_file(key_path, password=passphrase)
-
-            ssh.connect(hostname=host, port=port, username=user, pkey=pkey)
-            print("🔐 Conectado por clave privada")
+                pkey = RSAKey.from_private_key_file(cfg["key_path"], password=cfg.get("passphrase"))
+            ssh.connect(
+                hostname=cfg["host"],
+                port=cfg.get("port", 22),
+                username=cfg["user"],
+                pkey=pkey
+            )
+            print(f"🔐 {cfg['host']} conectado por clave privada")
         else:
-            print("❌ No se definió SSH_PASSWORD ni SSH_KEY_PATH")
-            sys.exit(1)
-
+            print("❌ No se definió método de autenticación")
+            return None
         return ssh
-
     except Exception as e:
-        print(f"❌ Error en conexión SSH: {e}")
-        sys.exit(1)
+        print(f"❌ Error en conexión SSH {cfg['host']}: {e}")
+        return None
+
+def copy_recursive(sftp, remote_dir, local_dir, cutoff):
+    """
+    Copia archivos y subdirectorios recursivamente desde remote_dir a local_dir
+    preservando fechas y filtrando por cutoff (últimos N días).
+    """
+    os.makedirs(local_dir, exist_ok=True)
+    for entry in sftp.listdir_attr(remote_dir):
+        remote_path = f"{remote_dir}/{entry.filename}"
+        local_path = os.path.join(local_dir, entry.filename)
+
+        if stat.S_ISDIR(entry.st_mode):
+            copy_recursive(sftp, remote_path, local_path, cutoff)
+        else:
+            if entry.st_mtime >= cutoff:
+                sftp.get(remote_path, local_path)
+                attrs = sftp.stat(remote_path)
+                os.utime(local_path, (attrs.st_atime, attrs.st_mtime))
+                print(f"   → {remote_path} copiado a {local_path} [fechas preservadas]")
 
 def validate_rules(sftp, rules):
-    valid_rules = []
-    invalid_rules = []
-
+    valid_rules, invalid_rules = [], []
     for rule in rules:
         remote_dir = rule["remote"]
-        local_dir = os.path.normpath(rule["local"])
-
+        local_dir = rule["local"]
         try:
             sftp.listdir(remote_dir)
         except IOError:
             invalid_rules.append({**rule, "error": f"Directorio remoto no existe: {remote_dir}"})
             continue
-
         try:
             os.makedirs(local_dir, exist_ok=True)
         except Exception as e:
             invalid_rules.append({**rule, "error": f"No se pudo crear directorio local {local_dir}: {e}"})
             continue
-
         valid_rules.append(rule)
-
     return valid_rules, invalid_rules
 
 def migrate_recent_files(sftp, rules):
     days = get_days_from_env()
     cutoff = time.time() - (days * 86400)
 
-    total_files_global = 0
-    copied_files_global = 0
-
-    # Calcular total global
-    for rule in rules:
-        try:
-            files = sftp.listdir_attr(rule["remote"])
-            total_files_global += len([f for f in files if f.st_mtime >= cutoff])
-        except Exception:
-            pass
-
     for rule in rules:
         remote_dir = rule["remote"]
-        local_dir = os.path.normpath(rule["local"])
-
+        local_dir = rule["local"]
+        print(f"\n📂 Migrando recursivamente {remote_dir} → {local_dir} (últimos {days} días)")
         try:
-            files = sftp.listdir_attr(remote_dir)
-            recent_files = [f for f in files if f.st_mtime >= cutoff]
-
-            total_files = len(recent_files)
-            copied_files = 0
-
-            print(f"\n📂 Migrando archivos modificados en los últimos {days} días")
-            print(f"   {remote_dir} → {local_dir} ({total_files} archivos)")
-
-            for f in recent_files:
-                remote_path = f"{remote_dir}/{f.filename}"
-                local_path = os.path.join(local_dir, f.filename)
-
-                sftp.get(remote_path, local_path)
-
-                # Mantener fechas originales
-                attrs = sftp.stat(remote_path)
-                os.utime(local_path, (attrs.st_atime, attrs.st_mtime))
-
-                copied_files += 1
-                copied_files_global += 1
-
-                percent_dir = (copied_files / total_files) * 100 if total_files else 100
-                percent_global = (copied_files_global / total_files_global) * 100 if total_files_global else 100
-
-                print(f"   → {f.filename} ({copied_files}/{total_files}, {percent_dir:.1f}%) [fechas preservadas]")
-                print(f"🌍 Progreso global: {copied_files_global}/{total_files_global} ({percent_global:.1f}%)")
-
-            if total_files == 0:
-                print("   ⚠️ No hay archivos recientes en este directorio.")
-
+            copy_recursive(sftp, remote_dir, local_dir, cutoff)
         except Exception as e:
             print(f"❌ Error en {remote_dir}: {e}")
-            sys.exit(1)
 
-if __name__ == "__main__":
-    rules = get_file_rules()
-    ssh = connect_ssh()
-    sftp = ssh.open_sftp()
-
-    valid_rules, invalid_rules = validate_rules(sftp, rules)
-    if invalid_rules:
-        print("\n❌ Se encontraron reglas inválidas, abortando migración:")
-        for r in invalid_rules:
-            print(f" - {r['remote']} → {r['local']}: {r['error']}")
-        sftp.close()
-        ssh.close()
+def main():
+    ssh_configs = parse_ssh_configs()
+    if not ssh_configs:
+        print("❌ No se encontraron configuraciones SSH en .env")
         sys.exit(1)
 
-    migrate_recent_files(sftp, valid_rules)
+    for name, cfg in ssh_configs.items():
+        print(f"\n🔗 Procesando {name}: {cfg['host']}:{cfg.get('port',22)} ({cfg['user']})")
+        ssh = connect_ssh(cfg)
+        if not ssh:
+            continue
+        sftp = ssh.open_sftp()
+        valid_rules, invalid_rules = validate_rules(sftp, cfg.get("rules", []))
+        if invalid_rules:
+            print("\n❌ Reglas inválidas encontradas:")
+            for r in invalid_rules:
+                print(f" - {r['remote']} → {r['local']}: {r['error']}")
+        if valid_rules:
+            migrate_recent_files(sftp, valid_rules)
+        sftp.close()
+        ssh.close()
+        print(f"\n✅ Migración finalizada para {name}")
 
-    sftp.close()
-    ssh.close()
-    print("\n✅ Migración de archivos finalizada (fechas preservadas)")
+if __name__ == "__main__":
+    main()
