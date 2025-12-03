@@ -125,13 +125,18 @@ def migrate_recent_files(sftp, rules):
                 local_path = os.path.join(local_dir, f.filename)
 
                 sftp.get(remote_path, local_path)
+
+                # Mantener fechas originales
+                attrs = sftp.stat(remote_path)
+                os.utime(local_path, (attrs.st_atime, attrs.st_mtime))
+
                 copied_files += 1
                 copied_files_global += 1
 
                 percent_dir = (copied_files / total_files) * 100 if total_files else 100
                 percent_global = (copied_files_global / total_files_global) * 100 if total_files_global else 100
 
-                print(f"   → {f.filename} ({copied_files}/{total_files}, {percent_dir:.1f}%)")
+                print(f"   → {f.filename} ({copied_files}/{total_files}, {percent_dir:.1f}%) [fechas preservadas]")
                 print(f"🌍 Progreso global: {copied_files_global}/{total_files_global} ({percent_global:.1f}%)")
 
             if total_files == 0:
@@ -159,4 +164,4 @@ if __name__ == "__main__":
 
     sftp.close()
     ssh.close()
-    print("\n✅ Migración de archivos finalizada")
+    print("\n✅ Migración de archivos finalizada (fechas preservadas)")

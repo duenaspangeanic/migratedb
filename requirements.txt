@@ -1,4 +1,11 @@
+# Conexión a MySQL/MariaDB
 mysql-connector-python
+
+# Manejo de variables de entorno (.env)
 python-dotenv
+
+# Manipulación de datos y generación de reportes CSV
 pandas
+
+# Conexión SSH y transferencia de archivos
 paramiko
