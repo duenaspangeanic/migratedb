@@ -1,6 +1,3 @@
-Aquí tienes el **README.md completo** listo para copiar y pegar en tu proyecto 👇  
-
-```markdown
 # 🛠️ Proyecto de Migración de Bases de Datos MySQL
 
 Este proyecto permite migrar bases de datos completas desde un servidor **origen** hacia un servidor **destino**, asegurando que:
@@ -161,4 +158,4 @@ Ejemplo JSON:
         {"database": "Relay", "table": "files", "column": "description", "original": "", "replacement": "TextoNuevo", "replacements_done": 12000}
     ]
 }
-```
+
