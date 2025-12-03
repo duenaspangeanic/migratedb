@@ -1,4 +1,4 @@
-# 🛠️ Proyecto de Migración MySQL/MariaDB
+# 🛠️ Migración MySQL/MariaDB
 
 Este proyecto automatiza la migración de bases de datos entre servidores **MariaDB → MariaDB** y **MySQL → MySQL**, aplicando reglas de transformación de datos, recreando índices y generando reportes finales.  
 También puede usarse en migraciones cruzadas (MariaDB ↔ MySQL), con precaución en tipos de datos y collations.
