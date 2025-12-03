@@ -20,23 +20,6 @@ También puede usarse en migraciones cruzadas (MariaDB ↔ MySQL), con precauci�
   - Foreign keys añadidas o fallidas.
 - **Compatibilidad multiplataforma**: funciona en Windows y Linux.
 
----
-
-## 📂 Estructura del proyecto
-
-
-
-| Archivo                                | Descripción                                 |
-|----------------------------------------|---------------------------------------------|
-| `migrate.py`                           | Script principal                            |
-| `.env`                                 | Variables de entorno (conexiones y reglas)  |
-| `migration_report_YYYYMMDD_HHMMSS.json`| Reporte detallado en JSON                   |
-| `migration_report_YYYYMMDD_HHMMSS.csv` | Reporte resumido en CSV                     |
-
-
-
----
-
 ## ⚙️ Configuración
 
 En el archivo `.env` define:
