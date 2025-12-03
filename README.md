@@ -24,7 +24,7 @@ También puede usarse en migraciones cruzadas (MariaDB ↔ MySQL), con precauci�
 
 ## 📂 Estructura del proyecto
 
-```
+
 
 | Archivo                                | Descripción                                 |
 |----------------------------------------|---------------------------------------------|
@@ -33,7 +33,7 @@ También puede usarse en migraciones cruzadas (MariaDB ↔ MySQL), con precauci�
 | `migration_report_YYYYMMDD_HHMMSS.json`| Reporte detallado en JSON                   |
 | `migration_report_YYYYMMDD_HHMMSS.csv` | Reporte resumido en CSV                     |
 
-```
+
 
 ---
 
