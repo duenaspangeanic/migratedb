@@ -96,7 +96,8 @@ def copy_and_count_recursive(sftp, remote_dir, local_dir, cutoff, copied_files_g
                 )
                 copied_local += copied_sub
             else:
-                print(f"⏭️ Carpeta saltada (antigua): {remote_path}")
+                pass
+                # print(f"⏭️ Carpeta saltada (antigua): {remote_path}")
         else:
             # 🔎 Solo copiar ficheros recientes
             if entry.st_mtime >= cutoff:
