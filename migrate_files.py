@@ -88,20 +88,27 @@ def copy_and_count_recursive(sftp, remote_dir, local_dir, cutoff, copied_files_g
         local_path = os.path.join(local_dir, entry.filename)
 
         if stat.S_ISDIR(entry.st_mode):
-            copied_sub, copied_files_global = copy_and_count_recursive(
-                sftp, remote_path, local_path, cutoff, copied_files_global
-            )
-            copied_local += copied_sub
+            # 🔎 Solo entrar en carpetas recientes
+            if entry.st_mtime >= cutoff:
+                print(f"📂 Carpeta reciente: {remote_path} (modificada {time.ctime(entry.st_mtime)})")
+                copied_sub, copied_files_global = copy_and_count_recursive(
+                    sftp, remote_path, local_path, cutoff, copied_files_global
+                )
+                copied_local += copied_sub
+            else:
+                print(f"⏭️ Carpeta saltada (antigua): {remote_path}")
         else:
+            # 🔎 Solo copiar ficheros recientes
             if entry.st_mtime >= cutoff:
                 sftp.get(remote_path, local_path)
-                os.utime(local_path, (entry.st_atime, entry.st_mtime))  # sin stat extra
+                os.utime(local_path, (entry.st_atime, entry.st_mtime))
                 copied_local += 1
                 copied_files_global += 1
                 print(f"   → {remote_path} copiado a {local_path}")
                 print(f"🌍 Archivos copiados hasta ahora: {copied_files_global}")
 
     return copied_local, copied_files_global
+
 
 def migrate_recent_files(sftp, rules):
     days = get_days_from_env()
